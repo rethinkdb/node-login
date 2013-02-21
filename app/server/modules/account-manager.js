@@ -1,41 +1,10 @@
 var crypto = require('crypto'),
     moment = require('moment'),
-    dbConfig = require('./config').dbConfig,
-    r = require('rethinkdb');
+    dbConfig = require('../config').dbConfig,
+    r = require('rethinkdb'),
+    useConnectionPooling = false,
+    connectionPool = null;
 
-// console.log("dbConfig: %j", dbConfig);
-
-// var connectionPool = pool.Pool({
-//   name: 'rethinkdb',
-//   max : 10,
-//   min : 2,
-//   log : true,
-//   idleTimeoutMillis : 1 * 60 * 1000,
-//   reapIntervalMillis: 30 * 1000, 
-
-//   create: function(callback) {
-//     r.connect({host: dbConfig['host'] || 'localhost', port: dbConfig['port'] || 28015 }, 
-//       function(connection){
-//         connection['_id'] = Math.floor(Math.random()*10001);
-//         logdebug('[DEBUG]: Connection created: %s', connection['_id']);
-//         return callback(null, connection);
-//       }, 
-//       function() {
-//         var errMsg = util.format("Failed connecting to RethinkDB instance on {host: %s, port: %s}", dbConfig['host'] || localhost, dbConfig['port'] || 28015);
-//         return callback(new Error(errMsg));
-//       }
-//     );
-//   },
-
-//   destroy: function(connection) {
-//     logdebug('[DEBUG]: Connection closed: %s', connection['_id']);
-
-//     connection.close();
-//   }
-// });
-
-// db setup:
-// create the database `RDB_DB` (defaults to `node-login`) and the `accounts` table
 
 /* login validation methods */
 
@@ -361,17 +330,77 @@ exports.delAllRecords = function(callback) {
 
 // utility functions
 
+// configure connection pooling if settings are provided in `config`
+if (typeof dbConfig.pool === 'object') {
+  var pool = require('generic-pool');
+  useConnectionPooling = true;
 
-function onConnection(callback) {
-  r.connect({host: dbConfig['host'], port: dbConfig['port']}, function(connection) {
-      connection.use(dbConfig['db']);
-      callback(null, connection);
+  connectionPool = pool.Pool({
+    name: 'rethinkdb',
+    max : dbConfig.pool.max || 1000,
+    min : dbConfig.pool.min || 2,
+    log : dbConfig.pool.log || true,
+    idleTimeoutMillis : dbConfig.pool.idleTimeoutMillis || 1 * 60 * 1000,
+    reapIntervalMillis: dbConfig.pool.reapIntervalMillis || 30 * 1000, 
+
+    create: function(callback) {
+      r.connect({host: dbConfig['host'] || 'localhost', port: dbConfig['port'] || 28015 }, 
+        function(connection){
+          connection._id = Math.floor(Math.random()*10001);
+          connection.use(dbConfig.db);
+          console.log("[DEBUG]: Connection created: %s", connection._id);
+          return callback(null, connection);
+        }, 
+        function() {
+          var errMsg = util.format("Failed connecting to RethinkDB instance on {host: %s, port: %s}", dbConfig.host, dbConfig.port);
+          return callback(new Error(errMsg));
+        }
+      );
     },
-    function(err) {
-      console.log("[ERROR]: Cannot connect to RethinkDB database: %s on port %s", dbConfig['host'], dbConfig['port']);
-      callback(err);
+
+    destroy: function(connection) {
+      console.log("[DEBUG]: Connection closed: %s", connection._id);
+
+      connection.close();
     }
-  )
+  });
+
+}
+
+/**
+ * Get a database connection. If a connection pool is
+ * configured in `config` then the connection is
+ * retrieved from the pool. Otherwise a new connection
+ * is created.
+ */
+function onConnection(callback) {
+  if(useConnectionPooling) {
+    connectionPool.acquire(function(err, connection) {
+      if(err) {
+        callback(err);
+      }
+      else {
+        try {
+          callback(null, connection);
+        }
+        finally {
+          connectionPool.release(connection);
+        }
+      }
+    });
+  }
+  else {
+    r.connect({host: dbConfig.host, port: dbConfig['port']}, function(connection) {
+        connection['_id'] = Math.floor(Math.random()*10001);
+        connection.use(dbConfig.db);
+        callback(null, connection);
+      },
+      function(err) {
+        console.log("[ERROR]: Cannot connect to RethinkDB database: %s on port %s", dbConfig['host'], dbConfig['port']);
+        callback(err);
+      }
+    )
+  }
 }
 
 /* private encryption & validation methods */
