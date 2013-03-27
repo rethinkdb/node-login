@@ -1,6 +1,7 @@
 var crypto = require('crypto'),
     moment = require('moment'),
     dbConfig = require('../config').dbConfig,
+    util = require('util'),
     r = require('rethinkdb'),
     useConnectionPooling = false,
     connectionPool = null;
@@ -353,6 +354,7 @@ if (typeof dbConfig.pool === 'object') {
         }, 
         function() {
           var errMsg = util.format("Failed connecting to RethinkDB instance on {host: %s, port: %s}", dbConfig.host, dbConfig.port);
+          console.log("[ERROR]: " + errMsg);
           return callback(new Error(errMsg));
         }
       );
