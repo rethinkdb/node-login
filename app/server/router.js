@@ -8,11 +8,11 @@ module.exports = function(app) {
 // main login page //
 
 	app.get('/', function(req, res){
-	// check if the user's credentials are saved in a cookie //
+		// check if the user's credentials are saved in a cookie //
 		if (req.cookies.user == undefined || req.cookies.pass == undefined){
 			res.render('login', { title: 'Hello - Please Login To Your Account' });
 		}	else{
-	// attempt automatic login //
+			// attempt automatic login //
 			AM.autoLogin(req.cookies.user, req.cookies.pass, function(o){
 				if (o != null){
 				    req.session.user = o;
@@ -43,7 +43,7 @@ module.exports = function(app) {
 	
 	app.get('/home', function(req, res) {
 	    if (req.session.user == null){
-	// if user is not logged-in redirect back to login page //
+			// if user is not logged-in redirect back to login page //
 	        res.redirect('/');
 	    }   else{
 			res.render('home', {
@@ -67,7 +67,7 @@ module.exports = function(app) {
 					res.send('error-updating-account', 400);
 				}	else{
 					req.session.user = o;
-			// update the user's login cookies if they exists //
+					// update the user's login cookies if they exists //
 					if (req.cookies.user != undefined && req.cookies.pass != undefined){
 						res.cookie('user', o.user, { maxAge: 900000 });
 						res.cookie('pass', o.pass, { maxAge: 900000 });	
@@ -134,7 +134,7 @@ module.exports = function(app) {
 			if (e != 'ok'){
 				res.redirect('/');
 			} else{
-	// save the user's email in a session instead of sending to the client //
+				// save the user's email in a session instead of sending to the client //
 				req.session.reset = { email:email, passHash:passH };
 				res.render('reset', { title : 'Reset Password' });
 			}
@@ -143,9 +143,9 @@ module.exports = function(app) {
 	
 	app.post('/reset-password', function(req, res) {
 		var nPass = req.param('pass');
-	// retrieve the user's email from the session to lookup their account and reset password //
+		// retrieve the user's email from the session to lookup their account and reset password //
 		var email = req.session.reset.email;
-	// destory the session immediately after retrieving the stored email //
+		// destory the session immediately after retrieving the stored email //
 		req.session.destroy();
 		AM.updatePassword(email, nPass, function(o){
 			if (o){
