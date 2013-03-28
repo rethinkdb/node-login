@@ -15,31 +15,40 @@ var crypto = require('crypto'),
  * Retrieve an user by the username and check 
  */
 exports.autoLogin = function(user, pass, callback) {
-  console.log("autoLogin: {%s, %s}", user, pass);
+  console.log("autoLogin: {%s, %s}", user);
 
   onConnection(function(err, connection) {
-    if(err) { 
-      callback(null);
-      return;
+    if(err) {
+      console.log("[ERROR][autoLogin]: %s:%s\n%s", err.name, err.msg, err.message);
+      return callback(null);
     }
-    connection.run(r.table('accounts').filter({user: user}), function(result){
-      if(result === undefined) {
+    r.table('accounts').filter({user: user}).run(connection, function(err, cursor) {
+      if(err) {
+        console.log("[ERROR][autoLogin][filter]: %s:%s\n%s", err.name, err.msg, err.message);
+        return callback(null)
+      }
+      if(!cursor.hasNext()) {
         console.log("[INFO ]: User not found '%s'", user);
-        callback(null);
+        release(connection);
+        return callback(null);
       }
-      else if(result && result['name'] === 'Runtime Error') {
-        console.log("[ERROR]: %s", result['message']);
-        callback(null);
-      }
-      else if (result['pass'] === pass){
-        callback(result);
-      }
-      else {
-        console.log("[INFO ]: User '%s' found but pass doesn't match", user);
-        callback(null);
-      }
-      return false; // get only the first result
-    });    
+      cursor.next(function(err, result) {
+        if(err) {
+          console.log("[ERROR][autoLogin][next]: %s:%s\n%s", err.name, err.msg, err.message);
+          callback(null);
+        }
+        else {
+          if(result.pass === pass) {
+            callback(result);
+          }
+          else {
+            console.log("[INFO ]: User '%s' found but pass doesn't match", user);
+            callback(null);
+          }
+        }
+        release(connection);
+      });
+    });
   });
 }
 
@@ -47,35 +56,48 @@ exports.autoLogin = function(user, pass, callback) {
  * TODO: see if the password check can be performed in the query
  */
 exports.manualLogin = function(user, pass, callback) {
-  console.log("manualLogin: {%s, %s}", user, pass);
+  console.log("manualLogin: {%s, %s}", user);
 
   onConnection(function(err, connection) {
     if(err) { 
+      console.log("[ERROR][manualLogin]: %s:%s\n%s", err.name, err.msg, err.message);
       callback(null);
       return;
     }
 
-    connection.run(r.table('accounts').filter({user: user}).limit(1), function(result) {
-      if(result === undefined) {
-        console.log("[INFO ]: User not found '%s'", user);
-        callback('user-not-found');
-      }    
-      else if(result && result['name'] === 'Runtime Error') {
-        console.log("[ERROR]: %s", result['message']);
+    r.table('accounts').filter({user: user}).limit(1).run(connection, function(err, cursor) {
+      if(err) {
+        console.log("[ERROR][manualLogin]: %s:%s\n%s", err.name, err.msg, err.message);
         callback(null);
       }
       else {
-        validatePassword(pass, result.pass, function(err, res) {
-          if (res) {
-            callback(null, result);
-          }
-          else {
-            callback('invalid-password');
-          }
-        });
+        if(cursor.hasNext()) {
+          cursor.next(function(err, o) {
+            if(err) {
+              console.log("[ERROR][manualLogin]: %s:%s\n%s", err.name, err.msg, err.message);
+              release(connection);
+            }
+            else {
+              validatePassword(pass, o.pass, function(err, res) {
+                if (res) {
+                  callback(null, o);
+                }
+                else {
+                  callback('invalid-password');
+                }
+                release(connection);
+              });              
+            }
+          });
+        }
+        else {
+          console.log("[INFO ][manualLogin]: User not found '%s'", user);
+          callback('user-not-found');
+          release(connection);
+        }
       }
-      return false; // process only the first result
     });
+
   });
 }
 
@@ -91,42 +113,54 @@ exports.manualLogin = function(user, pass, callback) {
 exports.addNewAccount = function(newData, callback) {
   onConnection(function(err, connection) {
     if(err) {
+      console.log("[ERROR][addNewAccount]: %s:%s\n%s", err.name, err.msg, err.message);
       callback(err);
       return
     }
-    connection.run(r.table('accounts').filter(
-      function(doc) {
-        return doc('user').eq(newData.user).or(doc('email').eq(newData.email))
-      }).limit(1), function(result) {
-        // nothing found: we can insert
-        if(result === undefined) {
-          console.log("[DEBUG]: Inserting: %j", newData);
-          saltAndHash(newData.pass, function(hash){
-            newData.pass = hash;
-            // append date stamp when record was created //
-            newData.date = moment().format('MMMM Do YYYY, h:mm:ss a');
-            connection.run(r.table('accounts').insert(newData), function(result) {
-              if(result && result['inserted'] === 1) {
-                newData['id'] = result['generated_keys'][0];
-                callback(null, newData);
+
+    r.table('accounts').filter(function(doc) { return r.or(doc('user').eq(newData.user), doc('email').eq(newData.email));})
+     .limit(1).run(connection, function(err, cursor) {
+        if(err) {
+          console.log("[ERROR][addNewAccount]: %s:%s\n%s", err.name, err.msg, err.message);
+        }
+        else {
+          if(cursor.hasNext()) {
+            cursor.next(function(err, result) {
+              if(err) {
+                console.log("[ERROR][addNewAccount][next]: %s:%s\n%s", err.name, err.msg, err.message);
               }
               else {
-                callback(null);
+                if (result.user == newData.user) {
+                  callback('username-taken');
+                }
+                else {
+                  callback('email-taken');
+                }
               }
+              release(connection);
             });
-          });          
-        }
-        else if(result['name'] !== 'Runtime Error') {
-          if (result['user'] == newData.user) {
-            callback('username-taken');
           }
           else {
-            callback('email-taken');
+            saltAndHash(newData.pass, function(hash) {
+              newData.pass = hash;
+              // append date stamp when record was created //
+              newData.date = moment().format('MMMM Do YYYY, h:mm:ss a');
+            
+              r.table('accounts').insert(newData).run(connection, function(err, result) {
+                if(result && result.inserted === 1) {
+                  newData['id'] = result['generated_keys'][0];
+                  callback(null, newData);
+                }
+                else {
+                  console.log("[ERROR][addNewAccount][insert]: %s:%s\n%s", err.name, err.msg, err.message);
+                  callback(null);
+                }
+                release(connection);
+              });
+            }); 
           }
         }
-        return false;
-      }
-    );
+      });
   });
 }
 
@@ -147,25 +181,26 @@ function update(newUserData, callback) {
   console.log("[DEBUG] update: %j", newUserData);
   onConnection(function(err, connection) {
     if(err) {
+      console.log("[ERROR][update]: %s:%s\n%s", err.name, err.msg, err.message);
       return callback(err);
     }
-    connection.run(r.table('accounts').filter({user: newUserData.user}).limit(1).update(newUserData),
-      function(result) {
-        console.log("[DEBUG] update: %j", result);
-
-        if(result && result.name === 'Runtime Error') {
-          console.log("[ERROR] update: %s", result.message);
-          callback(result.message);
+    
+    r.table('accounts').filter({user: newUserData.user}).limit(1)
+     .update(newUserData)
+     .run(connection, function(err, result) {
+        if(err) {
+          console.log("[ERROR][update]: %s:%s\n%s", err.name, err.msg, err.message);
+          callback(err.msg);
         }
-        else if (result.updated === 1) {
+        else if(result.replaced === 1) {
           callback(null, newUserData);
         }
         else {
           callback(false);
         }
-        return false;
+        release(connection);
       }
-    );
+    )
   });
 }
 
@@ -182,24 +217,25 @@ function update(newUserData, callback) {
  * @param {Function} callback
  */ 
 exports.updatePassword = function(email, newPass, callback) {
-  onConnection(function(err, connection) {
-    if(err) { return callback(false) }
+  saltAndHash(newPass, function(hash){
+    onConnection(function(err, connection) {
+      if(err) {
+        console.log("[ERROR][updatePassword]: %s:%s\n%s", err.name, err.msg, err.message);
+        return callback(err);
+      }
 
-    saltAndHash(newPass, function(hash){
-      connection.run(r.table('accounts').filter({email: email}).limit(1).update({pass: hash}), function(result) {
-        if(result && result['name'] === 'Runtime Error') {
-          console.log("[ERROR] updatePassword: %s", result['message']);
-          callback(false);
+      r.table('accounts').filter({email: email}).limit(1).update({pass: hash}).run(connection,
+        function(err, result) {
+          if(result && result.replaced === 1) {
+            callback(true);
+          }
+          else {
+            callback(false);
+          }
+          release(connection);
         }
-        else if (result['updated'] === 1) {
-          callback(true);
-        }
-        else {
-          callback(false);
-        }
-        return false;
-      });    
-    });
+      );
+    });  
   });
 }
 
@@ -216,16 +252,25 @@ exports.updatePassword = function(email, newPass, callback) {
 exports.getAccountByEmail = function(email, callback) {
   onConnection(function(err, connection) {
     if(err) { return callback(false)}
-    connection.run(r.table('accounts').filter({email: email}).limit(1), function(result) {
-      if(result && result['name'] === 'Runtime Error') {
-        console.log("[ERROR] getAccountByEmail(%s): %s", email, result['message']);
-        callback(false);
+
+    r.table('accounts').filter({email: email}).limit(1).run(connection,
+      function(err, cursor) {
+        if(err) {
+          console.log("[ERROR][getAccountByEmail]: %s:%s\n%s", err.name, err.msg, err.message);
+          return callback(false);
+        }
+        cursor.next(function(err, result) {
+          if(err) {
+            console.log("[ERROR][getAccountByEmail][next]: %s:%s\n%s", err.name, err.msg, err.message);
+            callback(false);
+          }
+          else {
+            callback(result);
+          }
+          release(connection);
+        });
       }
-      else {
-        callback(result);
-      }
-      return false;
-    });
+    )
   });
 }
 
@@ -245,15 +290,27 @@ exports.getAccountByEmail = function(email, callback) {
 exports.validateResetLink = function(email, passHash, callback) {
   onConnection(function(err, connection) {
     if(err) { return callback(null) }
-    connection.run(r.table('accounts').filter({email: email, pass: passHash}).limit(1), function(result) {
-      if(result && result['name'] === 'Runtime Error') {
-        console.log("[ERROR] validateResetLink: %s", result['message']);
-        callback(null);
+
+    r.table('accounts').filter({email: email, pass: passHash}).limit(1).run(connection,
+      function(err, cursor) {
+        if(err) {
+          console.log("[ERROR][validateResetLink] %s:%s\n%s", err.name, err.msg, err.message);
+          callback(null);
+          release(connection);
+        }
+        else {
+          cursor.next(function(err, result) {
+            if(err) {
+              callback(null);
+            }
+            else {
+              callback('ok');
+            }
+            release(connection);
+          });
+        }
       }
-      else {
-        callback('ok')
-      }
-    });
+    )
   });
 }
 
@@ -264,15 +321,22 @@ exports.validateResetLink = function(email, passHash, callback) {
  */
 exports.getAllRecords = function(callback) {
   onConnection(function(err, connection) {
-    if(err) { return callback(err, []) }
-    connection.run(r.table('accounts'), {}).collect(function(results) {
-      if(results.length === 1 && results[0]['name'] === 'Runtime Error') {
-        console.log("[ERROR] getAllRecords: %s", results[0]['message']);
-        callback(results[0]['message'], [])
+    if(err) { return callback(err) }
+
+    r.table('accounts').run(connection, function(err, cursor) {
+      if(err) {
+        release(connection);
+        return callback(err);
       }
-      else {
-        callback(null, results);
-      }
+      cursor.toArray(function(err, results) {
+        if(err) {
+          callback(err);
+        }
+        else {
+          callback(null, results);
+        }
+        release(connection);
+      });
     });
   })
 };
@@ -289,20 +353,15 @@ exports.deleteAccount = function(id, callback) {
   console.log("deleteAccount: %s", id);
   onConnection(function(err, connection) {
     if(err) { return callback(err) }
-    connection.run(r.table('accounts').get(id).del(), function(result) {
-      if(result['name'] === 'Runtime Error') {
-        console.log("[ERROR]: %s", result['message']);
-        callback(result['message']);
+
+    r.table('accounts').get(id).delete().run(connection, function(err, result) {
+      if(err || result.deleted !== 1) {
+        callback(false);
       }
       else {
-        if(result['deleted'] === 1) {
-          callback(null, true);
-        }
-        else {
-          callback(false);
-        }
+        callback(null, true);
       }
-      return false;
+      release(connection);
     });
   });
 }
@@ -315,16 +374,16 @@ exports.deleteAccount = function(id, callback) {
 exports.delAllRecords = function(callback) {
   onConnection(function(err, connection) {
     if(err) { return callback(err) }
-    connection.run(r.table('accounts').del(), function(result) {
-      if(result && result['name'] === 'Runtime Error') {
+    r.table('accounts').delete().run(connection, function(err, result) {
+      if(err) {
         console.log("[ERROR] delAllRecords: %s", result['message']);
-        callback(result['message']);
+        callback(err.msg);
       }
       else {
-        console.log("[INFO] delAllRecords: Removed %s accounts", result['deleted']);
-        callback(null, result['deleted']);
+        console.log("[INFO] delAllRecords: Removed %s accounts", result.deleted);
+        callback(null, result.deleted);
       }
-      return false;
+      release(connection);
     });
   })
 }
@@ -345,19 +404,17 @@ if (typeof dbConfig.pool === 'object') {
     reapIntervalMillis: dbConfig.pool.reapIntervalMillis || 30 * 1000, 
 
     create: function(callback) {
-      r.connect({host: dbConfig['host'] || 'localhost', port: dbConfig['port'] || 28015 }, 
-        function(connection){
+      r.connect({host: dbConfig.host, port: dbConfig.port}, function(err, connection) {
+          if(err) {
+            var errMsg = util.format("Failed connecting to RethinkDB instance on {host: %s, port: %s}", dbConfig.host, dbConfig.port);
+            console.log("[ERROR]: " + errMsg);
+            return callback(new Error(errMsg));
+          }
           connection._id = Math.floor(Math.random()*10001);
           connection.use(dbConfig.db);
           console.log("[DEBUG]: Connection created: %s", connection._id);
-          return callback(null, connection);
-        }, 
-        function() {
-          var errMsg = util.format("Failed connecting to RethinkDB instance on {host: %s, port: %s}", dbConfig.host, dbConfig.port);
-          console.log("[ERROR]: " + errMsg);
-          return callback(new Error(errMsg));
-        }
-      );
+          callback(null, connection);
+      });
     },
 
     destroy: function(connection) {
@@ -382,26 +439,38 @@ function onConnection(callback) {
         callback(err);
       }
       else {
-        try {
-          callback(null, connection);
-        }
-        finally {
-          connectionPool.release(connection);
-        }
+        console.log("[DEBUG]: Pooled connection: %s", connection._id);
+        callback(null, connection);
       }
     });
   }
   else {
-    r.connect({host: dbConfig.host, port: dbConfig['port']}, function(connection) {
-        connection['_id'] = Math.floor(Math.random()*10001);
-        connection.use(dbConfig.db);
-        callback(null, connection);
-      },
-      function(err) {
+    r.connect({host: dbConfig.host, port: dbConfig.port}, function(err, connection) {
+      if(err) {
         console.log("[ERROR]: Cannot connect to RethinkDB database: %s on port %s", dbConfig['host'], dbConfig['port']);
         callback(err);
       }
-    )
+      else {
+        connection._id = Math.floor(Math.random()*10001);
+        connection.use(dbConfig.db);
+        console.log("[DEBUG]: Connection created: %s", connection._id);
+        callback(null, connection);
+      }
+    });
+  }
+}
+
+/**
+ * Closing the connection or returning it to the connection pool
+ * if using it.
+ */ 
+function release(connection) {
+  console.log("[DEBUG]: Releasing connection: %s", connection._id);
+  if(useConnectionPooling) {
+    connectionPool.release(connection);
+  }
+  else {
+    connection.close();
   }
 }
 
