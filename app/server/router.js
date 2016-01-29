@@ -23,7 +23,7 @@ module.exports = function(app) {
 			});
 		}
 	});
-	
+
 	app.post('/', function(req, res){
 		AM.manualLogin(req.param('user'), req.param('pass'), function(e, o){
 			if (!o){
@@ -38,9 +38,9 @@ module.exports = function(app) {
 			}
 		});
 	});
-	
+
 // logged-in user homepage //
-	
+
 	app.get('/home', function(req, res) {
 	    if (req.session.user == null){
 			// if user is not logged-in redirect back to login page //
@@ -53,24 +53,24 @@ module.exports = function(app) {
 			});
 	    }
 	});
-	
+
 	app.post('/home', function(req, res){
-		if (req.param('user') != undefined) {
+		if (req.body('user') != undefined) {
 			AM.updateAccount({
-				user 		: req.param('user'),
-				name 		: req.param('name'),
-				email 		: req.param('email'),
-				country 	: req.param('country'),
-				pass		: req.param('pass')
+				user 		: req.body('user'),
+				name 		: req.body('name'),
+				email 		: req.body('email'),
+				country 	: req.body('country'),
+				pass		: req.body('pass')
 			}, function(e, o){
-				if (e){
+				if (e){body
 					res.send('error-updating-account', 400);
 				}	else{
 					req.session.user = o;
 					// update the user's login cookies if they exists //
 					if (req.cookies.user != undefined && req.cookies.pass != undefined){
 						res.cookie('user', o.user, { maxAge: 900000 });
-						res.cookie('pass', o.pass, { maxAge: 900000 });	
+						res.cookie('pass', o.pass, { maxAge: 900000 });
 					}
 					res.send('ok', 200);
 				}
@@ -81,20 +81,20 @@ module.exports = function(app) {
 			req.session.destroy(function(e){ res.send('ok', 200); });
 		}
 	});
-	
+
 // creating new accounts //
-	
+
 	app.get('/signup', function(req, res) {
 		res.render('signup', {  title: 'Signup', countries : CT });
 	});
-	
+
 	app.post('/signup', function(req, res){
 		AM.addNewAccount({
-			name 	: req.param('name'),
-			email 	: req.param('email'),
-			user 	: req.param('user'),
-			pass	: req.param('pass'),
-			country : req.param('country')
+			name 	: req.body('name'),
+			email 	: req.body('email'),
+			user 	: req.body('user'),
+			pass	: req.body('pass'),
+			country : req.body('country')
 		}, function(e){
 			if (e){
 				res.send(e, 400);
@@ -128,8 +128,8 @@ module.exports = function(app) {
 	});
 
 	app.get('/reset-password', function(req, res) {
-		var email = req.query["e"];
-		var passH = req.query["p"];
+		var email = req.body["e"];
+		var passH = req.body["p"];
 		AM.validateResetLink(email, passH, function(e){
 			if (e != 'ok'){
 				res.redirect('/');
@@ -140,9 +140,9 @@ module.exports = function(app) {
 			}
 		})
 	});
-	
+
 	app.post('/reset-password', function(req, res) {
-		var nPass = req.param('pass');
+		var nPass = req.body('pass');
 		// retrieve the user's email from the session to lookup their account and reset password //
 		var email = req.session.reset.email;
 		// destory the session immediately after retrieving the stored email //
@@ -155,15 +155,15 @@ module.exports = function(app) {
 			}
 		})
 	});
-	
+
 // view & delete accounts //
-	
+
 	app.get('/print', function(req, res) {
 		AM.getAllRecords( function(e, accounts){
 			res.render('print', { title : 'Account List', accts : accounts });
 		})
 	});
-	
+
 	app.post('/delete', function(req, res){
 		AM.deleteAccount(req.body.id, function(e, obj){
 			if (!e){
@@ -175,13 +175,13 @@ module.exports = function(app) {
 			}
 	    });
 	});
-	
+
 	app.get('/reset', function(req, res) {
 		AM.delAllRecords(function(){
-			res.redirect('/print');	
+			res.redirect('/print');
 		});
 	});
-	
+
 	app.get('*', function(req, res) { res.render('404', { title: 'Page Not Found'}); });
 
 };
